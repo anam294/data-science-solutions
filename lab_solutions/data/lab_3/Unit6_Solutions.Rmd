@@ -1,0 +1,218 @@
+---
+title: "Unit6_Solutions"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(ggplot2)
+```
+
+### Preparation
+
+```{r preparation}
+# Read the data
+fifa_df <- read.csv('../data/fifa.csv', header=TRUE)
+```
+## Logistic Regression 
+Load data. Drop data with missing values in any of the fields: Overall, Reactions, Composure, Potential, and International Reputation. How many rows are there?
+
+```{r Q1}
+columns_wanted <- c('Overall', 'Reactions', 'Composure', 'Potential', 'International.Reputation')
+lr_df <- fifa_df[columns_wanted]
+lr_df <- na.omit(lr_df)
+nrow(lr_df)
+```
+
+Create a new column named has_bad_reputation which is 1 if the player's reputation is 1 and 0 otherwise.
+
+```{r preparation2}
+lr_df$is_bad_reputation <- as.integer(lr_df$International.Reputation == 1)
+print('Distribution of is_bad_reputation')
+(table(lr_df$is_bad_reputation))
+```
+Fit a Logistic Regression Model with is_bad_reputation as target, and Overall as the only variable. Answer the following questions:
+1. What are the values of beta0 (intercept) and beta1 (slope)
+```{r Q11}
+lr <- glm(is_bad_reputation ~ Overall, data=lr_df, family = binomial(logit))
+(summary(lr))
+```
+2. How to interpret beta0?  
+  
+**Answer: The log odds of a player with an overall score of zero being with a bad reputation.**
+  
+3. According to the estimation, what is the probability that a player has a bad reputation given his/her Overall score is 0? 
+  
+**Answer: probability = 1 / (1 + exp(-$\beta_0$)), almost equal to 1**  
+  
+4. How to interpret beta1?  
+
+**Answer: For every unit increase in Overall score the log odds of the player having a bad reputation decreases by 0.424407.** 
+  
+5. Plot the logistic curve with x axis as the Overall score and y axis as the probability of the player having a bad reputation. Overlay the line y=0.5 on the plot. How does the plot look like?  
+
+```{r Q15}
+#(range(lr_df$Overall)) # 46 94
+grid_overall <- seq(40, 100, 1)
+grid_predict <- predict(lr, data.frame(Overall=grid_overall), type='response')
+g <- ggplot(lr_df, aes(x = Overall, y = is_bad_reputation)) +
+  geom_point(alpha = 0.1, colour = 'blue', size = 1, pch = 19) +
+  geom_line(
+    aes(x = grid_overall, y = grid_predict),
+    data = data.frame(grid_overall = grid_overall, grid_predict = grid_predict),
+    col = 'red') +
+  geom_hline(aes(yintercept = 0.5), col = 'grey')
+g
+```
+  
+5. What is the 90% confidence interval for beta1? How to interpret this confidence interval?  
+```{r Q16}
+beta1 <- lr$coefficients['Overall']
+beta1_std <- summary(lr)$coefficients['Overall', 'Std. Error']
+Q <- qnorm(1-0.05)
+lower_bound <- beta1 - Q * beta1_std
+upper_bound <- beta1 + Q * beta1_std
+(c(lower_bound, upper_bound))
+```
+  
+**Answer: we can be 90% confidence that the true value of the slope falls between [-0.4395135, -0.4093012]. That is, we can be 90% confident that the log odds of a player with a bad reputation decreases between 0.4093012 to 0.4395135 for every one unit increase in the Overall score.**
+  
+  
+## Possion Regression
+Please first conduct these steps to clean the data:
+	1. Remove the players with International Reputation = 1
+	2. Remove goal keepers and players with unknown positions - i.e. remove the rows with position field equal to NA or 'GK'.
+	3. Define position_count as above. When parsing the scores, please only include the score before the plus sign. For example, for the score '75+3', we parse it as 75, and therefore this is not considered a competent score.
+```{r data clearning}
+fifa_df <- read.csv('../data/fifa.csv', header=TRUE)
+
+fifa_df <- fifa_df[which(fifa_df$International.Reputation > 1),]
+fifa_df <- fifa_df[!is.na(fifa_df['Position']) & (fifa_df['Position'] != 'GK'), ]
+
+position_all <- c('LS', 'ST', 'RS', 'LW', 'LF', 'CF', 'RF', 'RW', 'LAM', 'CAM', 'RAM',
+                  'LM', 'LCM', 'CM', 'RCM', 'RM', 'LWB', 'LDM', 'CDM', 'RDM',
+                  'RWB', 'LB', 'LCB', 'CB', 'RCB', 'RB')
+
+for (pos in position_all){
+  fifa_df[pos] <- sapply(
+    fifa_df[, pos], 
+    function(x) as.integer(strsplit(as.character(x), '\\+')[[1]][1])
+  )
+  fifa_df[pos] <- (fifa_df[pos] > 75)
+}
+
+fifa_df['position_cnt'] <- apply(fifa_df[position_all], 1, sum)
+```
+
+1. Fit a GLM model with 'BallControl' (let's call it model 1). How to explain these coefficients (intercept and slope)?
+```{r Q21}
+m1 <- glm(position_cnt ~ BallControl, data=fifa_df, family='poisson')
+summary(m1)
+```
+  
+* $\beta_0 = −8.518, \beta_1 = 0.129$. The variable BallControl is significant  
+* Intercept: For BallControl = 0, the predicted number of positions the player can play in a top club is $\exp(\beta_0) = 0.002$.  
+* Slope: For every one unit the BallControl skill improves, the number of positions will be $\exp(\beta_1) = 1.138$ times of the number of positions before the improvement.  
+  
+2. Add 'Reaction' into the model (and call it model 2). What does the coefficients mean this time?
+```{r Q22}
+m2 <- glm(position_cnt ~ BallControl + Reactions, data=fifa_df, family='poisson')
+summary(m2)
+```
+* Same meaning for $\beta_0$  
+* Slopes: Given all other features (Reactions) unchanged, one unit of change of BallControl will cause the prediction to become $\exp(0.07) = 1.07$ times of that before the change.  
+
+3. Diagnose model 2 by producing the four plots
+* Residuals vs. Fitted, which draws a scatter-plot of fitted values against residuals, with a regression line showing any apparent trend
+* Normal Q-Q, which plots the standardized (z-score) residuals against the theoretical normal quantiles.
+* Scale-Location, which scatter plots absolute square-rooted normalized residuals and fitted values, with a regression line
+* Residuals vs. Leverage, which shows if any outliers have influence over the regression fit. Anything outside the group and outside "Cook's Distance" lines, may have an influential effect on model fit.
+```{r Q23}
+par(mfrow=c(2,2))
+plot(m2)
+```
+
+Is there any problem in model diagnose for model 2? What are the leverage points?
+* Outliers exist in residual plot, QQ plot and leverage plot
+* Case 1, 2 and 3 are leverage points
+* These are top players and model does not work well for them as for other players  
+
+4. Remove the top 3 players: Messi, Ronaldo and Neymar. Refit model 1 & 2. What do you find this time?
+```{r Q24}
+fifa_df1 <- fifa_df[4:nrow(fifa_df), ]
+m1 <- glm(position_cnt~BallControl, data=fifa_df1, family='poisson')
+m2 <- glm(position_cnt~BallControl + Reactions, data=fifa_df1, family='poisson')
+par(mfrow=c(2,2)); plot(m2)
+
+
+```
+* Outliers and influential points problems are mitigated, although there are still some potential leverage points.  
+
+## ANOVA
+1. For multivariate regression, using log_Value as target variable (refer to exercise in the linear regression chapter), fit two models:
+
+* Model 1: log_Value ~ age_cat  
+* Model 2: log_Value ~ age_cat + BallControl  
+
+Also perform ANOVA to compare Model 1 and Model 2. What is your conclusion? Look at the t-value of BallControl for Model 2, and look at the F-value for the ANOVA. What is the relationship between these two values?
+
+```{r Q31}
+parse_value <- function(v){
+  v = gsub('€', '', v)
+  type = substr(v, nchar(v), nchar(v))
+  
+  if (type == 'M') {
+    v = substr(v, 1, nchar(v)-1)
+    v1 = as.double(v) * 1000
+  }
+  else if (type == 'K') {
+    v = substr(v, 1, nchar(v)-1)
+    v1 = as.double(v)
+  }
+  else {
+    v1 = as.double(v) * 0.001
+  }
+  return(v1)
+}
+fifa_df$Value1 <- sapply(fifa_df$Value, parse_value)
+
+fifa_df2 <- fifa_df[fifa_df$Value1 >= 50, ]
+fifa_df2$log_Value <- log(fifa_df2$Value1)
+
+fifa_df2$age_cat <- as.factor(with(fifa_df2, ifelse(Age<=22, '01: [min, 22]', ifelse(Age<=31, '02: [23, 31]', '03: [32, max)'))))
+lm1 <- lm(log_Value ~ age_cat, data=fifa_df2)
+lm2 <- lm(log_Value ~ age_cat + BallControl, data=fifa_df2)
+summary(lm2)
+anova(lm1, lm2)
+
+```
+** Anova results show that `BallControl` brings significant improvement of the linear model. The t-value for `BallControl` is 28.73, and F-value is 825.43, which is the square of t-value. Essentially the individual feature test in Model 2 is the same as anova test for `BallControl`.**  
+  
+
+2. For logistic regression, using is_bad_reputation as target variable, create nested models as below and perform ANOVA. Which model do you think is the best?
+* Model 1: is_bad_reputation ~ Overall
+* Model 2: Model 1 + Potential
+* Model 3: Model 2 + Composure
+* Model 4: Model 2 + Composure + Reactions
+```{r Q32}
+lm1 <- glm(is_bad_reputation ~ Overall, data=lr_df, family = binomial(logit))
+lm2 <- glm(is_bad_reputation ~ Overall + Potential, data=lr_df, family = binomial(logit))
+lm3 <- glm(is_bad_reputation ~ Overall + Potential + Composure, data=lr_df, family = binomial(logit))
+lm4 <- glm(is_bad_reputation ~ Overall + Potential + Composure + Reactions, data=lr_df, family = binomial(logit))
+anova(lm1, lm2, lm3, lm4, test='Chisq')
+```
+
+3. For the Poisson regression, using positions_countas target variable create nested models as below. Conduct anovaon these models. What is your conclusion?
+
+* Model 1: positions_count ~ BallControl + Reactions
+* Model 2: Model 1 + SlidingTackle + SprintSpeed + HeadingAccuracy + Finishing + ShortPassing
+* Model 3: Model 2 + Volleys + Curve
+```{r Q33}
+fifa_df1 <- fifa_df[4:nrow(fifa_df), ]
+m2 <- glm(position_cnt~BallControl + Reactions, data=fifa_df1, family='poisson')
+m4 <- glm(position_cnt~BallControl + Reactions + SlidingTackle + SprintSpeed, data=fifa_df1, family='poisson')
+m5 <- update(m2, position_cnt~. + SlidingTackle + SprintSpeed + HeadingAccuracy + Finishing + ShortPassing, data=fifa_df1, family='poisson')
+m6 <- update(m5, position_cnt~. + Volleys + Curve, data=fifa_df1)
+anova(m2, m4, m5, m6, test='Chisq')
+```
